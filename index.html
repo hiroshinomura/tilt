@@ -2,13 +2,13 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Flappy Bird Clone with Stages & Enemies</title>
+  <title>Flappy Bird Clone with Story & Dynamic Enemies</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { overflow: hidden; }
     canvas { display: block; background: #70c5ce; }
-    #ui { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; font: bold 24px sans-serif; color: white; text-shadow: 1px 1px 2px #000; }
-    #ui div { padding: 0 10px; }
+    #ui { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; font: bold 24px sans-serif; color: white; text-shadow: 1px 1px 2px #000; z-index: 10; }
+    #story { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font: bold 36px sans-serif; color: yellow; text-shadow: 2px 2px 4px #000; white-space: pre-wrap; text-align: center; z-index: 10; }
   </style>
 </head>
 <body>
@@ -17,38 +17,46 @@
     <div id="score">0</div>
     <div id="hp">HP: 100</div>
   </div>
+  <div id="story" style="display:none;"></div>
   <canvas id="game"></canvas>
   <script>
-    const canvas = document.getElementById('game');
-    const ctx    = canvas.getContext('2d');
-    const ui     = { stage: document.getElementById('stage'), score: document.getElementById('score'), hp: document.getElementById('hp') };
+    const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
+    const ui = { stage: document.getElementById('stage'), score: document.getElementById('score'), hp: document.getElementById('hp') };
+    const storyEl = document.getElementById('story');
 
-    let lastDamageTime = 0;
-    let lastTiltTime = 0;
-    const tiltThreshold = -15; // β角度閾値
+    let lastDamageTime = 0, lastTiltTime = 0, orientationSetup = false;
+    const tiltThreshold = -15;
 
-    function resize() {
-      canvas.width  = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-    window.addEventListener('resize', resize);
-    resize();
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize); resize();
 
-    // ゲーム変数
     const bird = { x:80, y:0, w:30, h:30, vy:0, gravity:0.6, jump:-12 };
     let pipes = [], items = [], enemies = [];
-    let frame = 0, score = 0, hp = 100, running = true;
+    let frame = 0, score = 0, hp = 100;
     let stage = 1, startTime = Date.now();
-    let flash = 0, shake = 0;
+    let flash = 0, shake = 0, running = true;
+    let storyActive = false, storyStart = 0;
+    const storyTexts = [
+      '頼む…この羽根が折れないうちに飛べ！',
+      '空飛ぶカボチャ軍団が襲来！',
+      '真夜中のサーカスが開催中…気をつけろ！',
+      '重力が逆転するゾーン到来！？',
+      '時空の亀裂が開いた！くぐり抜けろ！',
+      '巨大ババロア雲が落下してくる！',
+      '宇宙空間を飛んでいる…酸素に注意！',
+      '魔法の竜巻で飛行速度加速中！',
+      '悪夢のカエル王が待ち構える…',
+      'ついに最終章、銀河の果てへ飛べ！'
+    ];
 
     function init() {
       bird.y = canvas.height/2; bird.vy = 0;
       pipes = []; items = []; enemies = [];
-      frame = 0; score = 0; hp = 100; stage = 1;
-      startTime = Date.now(); flash = 0; shake = 0;
-      lastDamageTime = 0; lastTiltTime = 0;
-      updateUI();
-      running = true;
+      frame = 0; score = 0; hp = 100;
+      stage = 1; startTime = Date.now(); flash = 0; shake = 0;
+      lastDamageTime = 0; lastTiltTime = 0; orientationSetup = false;
+      running = true; storyActive = false;
+      storyEl.style.display = 'none'; updateUI();
     }
 
     function updateUI() {
@@ -59,122 +67,125 @@
 
     function spawnPipe() {
       const gap = 140;
-      const topH = Math.random() * (canvas.height - gap - 80) + 40;
-      pipes.push({ x: canvas.width, topH, bottomY: topH + gap, scored: false });
-    }
-    function spawnItem() {
-      items.push({ x: canvas.width, y: Math.random() * (canvas.height - 50) + 25, collected: false });
-    }
-    function spawnEnemy() {
-      enemies.push({ x: canvas.width, y: Math.random() * (canvas.height - 30), w:30, h:30 });
+      const topH = Math.random()*(canvas.height-gap-80)+40;
+      pipes.push({ x:canvas.width, topH, bottomY:topH+gap, scored:false });
     }
 
-    function handleCollision(damage = 10) {
-      const now = Date.now();
-      if (!running || now - lastDamageTime < 500) return;
-      lastDamageTime = now;
-      hp = Math.max(0, hp - damage);
-      flash = 20; shake = 20;
-      updateUI();
-      navigator.vibrate?.(50);
-      if (hp <= 0) doGameOver();
+    function spawnItem() {
+      // 1/3 frequency
+      if (Math.random() < 1/3) items.push({ x:canvas.width, y:Math.random()*(canvas.height-50)+25, collected:false });
+    }
+
+    function spawnEnemies() {
+      const count = Math.min(stage, 10);
+      for(let i=0; i<count; i++) {
+        const type = Math.floor(Math.random()*3);
+        const sizes = [20, 30, 40];
+        enemies.push({ x:canvas.width + i*50, y:Math.random()*(canvas.height-sizes[type]), w:sizes[type], h:sizes[type], type });
+      }
+    }
+
+    function handleCollision(damage=10) {
+      const now = Date.now(); if(!running||now-lastDamageTime<500) return;
+      lastDamageTime = now; hp = Math.max(0, hp-damage);
+      flash = 20; shake = 20; updateUI(); navigator.vibrate?.(50);
+      if(hp<=0) doGameOver();
     }
 
     function doGameOver() {
-      running = false;
-      // Game Over 表示
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 48px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Game Over', canvas.width/2, canvas.height/2);
-      ctx.restore();
+      running = false; showStory('Game Over! Restarting...');
       setTimeout(init, 5000);
     }
 
-    function nextStage() {
-      stage++;
-      startTime = Date.now();
-      updateUI();
+    function startStory() {
+      running=false; storyActive=true; storyStart=Date.now();
+      storyEl.textContent = storyTexts[(stage-1)%storyTexts.length]; storyEl.style.display='block';
     }
 
-    // 入力処理
-    window.addEventListener('pointerdown', () => { if (running) bird.vy = bird.jump; });
-    window.addEventListener('keydown', e => { if (running && e.code === 'Space') bird.vy = bird.jump; });
-    window.addEventListener('deviceorientation', e => {
-      const now = Date.now();
-      if (!running) return;
-      const beta = e.beta || 0;
-      if (beta < tiltThreshold && now - lastTiltTime > 500) {
-        bird.vy = bird.jump;
-        lastTiltTime = now;
+    function endStory() {
+      storyActive=false; storyEl.style.display='none'; stage++; startTime=Date.now(); updateUI(); running=true;
+    }
+
+    function showStory(text) {
+      storyActive=true; storyStart=Date.now(); storyEl.textContent=text; storyEl.style.display='block';
+    }
+
+    function onOrientation(e) {
+      const now = Date.now(); if(!running||storyActive) return;
+      const beta = e.beta||0;
+      if(beta < tiltThreshold && now - lastTiltTime > 500) { bird.vy = bird.jump; lastTiltTime = now; }
+    }
+
+    function setupOrientation() {
+      if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function') {
+        DeviceOrientationEvent.requestPermission().then(p=>{ if(p==='granted') window.addEventListener('deviceorientation', onOrientation); }).catch(console.error);
+      } else {
+        window.addEventListener('deviceorientation', onOrientation);
       }
+    }
+
+    window.addEventListener('pointerdown', ()=>{
+      if(!orientationSetup){ setupOrientation(); orientationSetup=true; }
+      if(running && !storyActive) bird.vy = bird.jump;
     });
+    window.addEventListener('keydown', e=>{ if(running && !storyActive && e.code==='Space') bird.vy = bird.jump; });
 
     function loop() {
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      if (!running) return;
-
       const now = Date.now();
-      const elapsed = now - startTime;
-      if (elapsed > 20000) nextStage();
 
-      // シェイク & フラッシュ
-      ctx.save();
-      if (shake-- > 0) ctx.translate((Math.random()-0.5)*10, 0);
-      if (flash-- > 0) {
-        ctx.fillStyle = `rgba(255,255,0,${(flash/20)*0.5})`;
-        ctx.fillRect(0,0,canvas.width,canvas.height);
+      if(storyActive) {
+        if(now-storyStart > 5000) endStory();
+        requestAnimationFrame(loop); return;
       }
 
-      // 更新
+      if(running && now - startTime > 20000) { startStory(); requestAnimationFrame(loop); return; }
+
+      ctx.save(); if(shake-->0) ctx.translate((Math.random()-0.5)*10,0);
+      if(flash-->0) { ctx.fillStyle=`rgba(255,255,0,${(flash/20)*0.5})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
+
       frame++;
-      const pipeInterval = Math.max(60, 120 - stage*10);
-      if (frame === pipeInterval/2 || frame % pipeInterval === 0) spawnPipe();
-      if (frame % pipeInterval === 0) spawnItem();
-      const enemyInterval = Math.max(200, 300 - stage*20);
-      if (frame % enemyInterval === 0) for(let i=0;i<3;i++) spawnEnemy();
+      const pipeInt = Math.max(60,120-stage*10);
+      if(frame===pipeInt/2||frame%pipeInt===0) { spawnPipe(); spawnItem(); }
+      const enemyInt = Math.max(200,300-stage*20);
+      if(frame%enemyInt===0) spawnEnemies();
 
-      bird.vy += bird.gravity;
-      bird.y += bird.vy;
-      if (bird.y + bird.h > canvas.height) { bird.y = canvas.height - bird.h; bird.vy = 0; handleCollision(); }
-      if (bird.y < 0) { bird.y = 0; bird.vy = 0; }
+      bird.vy += bird.gravity; bird.y += bird.vy;
+      if(bird.y+bird.h>canvas.height){ bird.y=canvas.height-bird.h; bird.vy=0; handleCollision(); }
+      if(bird.y<0){ bird.y=0; bird.vy=0; }
 
-      pipes = pipes.filter(p => {
-        p.x -= 2 + stage*0.2;
-        if (!p.scored && p.x + 50 < bird.x) { score++; p.scored = true; updateUI(); }
-        if (bird.x < p.x + 50 && bird.x + bird.w > p.x && (bird.y < p.topH || bird.y + bird.h > p.bottomY)) handleCollision();
-        return p.x + 50 > 0;
+      pipes = pipes.filter(p=>{
+        p.x -= 2+stage*0.2;
+        if(!p.scored&&p.x+50<bird.x){ score++; p.scored=true; updateUI(); }
+        if(bird.x<p.x+50&&bird.x+bird.w>p.x&&(bird.y<p.topH||bird.y+bird.h>p.bottomY)) handleCollision();
+        return p.x+50>0;
       });
 
-      items = items.filter(it => {
+      items = items.filter(it=>{
         it.x -= 2;
-        if (!it.collected && bird.x < it.x + 15 && bird.x + bird.w > it.x - 15 && bird.y < it.y + 15 && bird.y + bird.h > it.y - 15) {
-          it.collected = true; hp=100; updateUI();
-        }
-        return it.x + 15 > 0 && !it.collected;
+        if(!it.collected&&bird.x<it.x+15&&bird.x+bird.w>it.x-15&&bird.y<it.y+15&&bird.y+bird.h>it.y-15){ it.collected=true; hp=100; updateUI(); }
+        return it.x+15>0&&!it.collected;
       });
 
-      enemies = enemies.filter(en => {
-        en.x -= 3 + stage*0.3;
-        if (bird.x < en.x + en.w && bird.x + bird.w > en.x && bird.y < en.y + en.h && bird.y + bird.h > en.y) handleCollision(20);
-        return en.x + en.w > 0;
+      enemies = enemies.filter(en=>{
+        en.x -= 3+stage*0.3;
+        if(bird.x<en.x+en.w&&bird.x+bird.w>en.x&&bird.y<en.y+en.h&&bird.y+bird.h>en.y) handleCollision(20);
+        return en.x+en.w>0;
       });
 
-      // 描画
-      pipes.forEach(p => { ctx.fillStyle='#0a0'; ctx.fillRect(p.x,0,50,p.topH); ctx.fillRect(p.x,p.bottomY,50,canvas.height-p.bottomY); });
-      items.forEach(it => { ctx.fillStyle='#009'; ctx.beginPath(); ctx.arc(it.x,it.y,15,0,2*Math.PI); ctx.fill(); });
-      enemies.forEach(en => { ctx.fillStyle='#f00'; ctx.fillRect(en.x,en.y,en.w,en.h); });
+      // Draw
+      pipes.forEach(p=>{ ctx.fillStyle='#0a0'; ctx.fillRect(p.x,0,50,p.topH); ctx.fillRect(p.x,p.bottomY,50,canvas.height-p.bottomY); });
+      items.forEach(it=>{ ctx.fillStyle='#009'; ctx.beginPath(); ctx.arc(it.x,it.y,15,0,2*Math.PI); ctx.fill(); });
+      enemies.forEach(en=>{
+        ctx.fillStyle = ['#f00','#a0f','#000'][en.type]; ctx.fillRect(en.x,en.y,en.w,en.h);
+      });
       ctx.fillStyle='#ff0'; ctx.fillRect(bird.x,bird.y,bird.w,bird.h);
 
       ctx.restore();
       requestAnimationFrame(loop);
     }
 
-    init();
-    loop();
+    init(); loop();
   </script>
 </body>
 </html>
