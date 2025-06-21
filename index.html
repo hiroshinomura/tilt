@@ -2,25 +2,29 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Flappy Bird Clone</title>
+  <title>Flappy Bird Clone with Stages & Enemies</title>
   <style>
-    * { margin: 0; padding: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; }
     canvas { display: block; background: #70c5ce; }
-    #score {
-      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
-      font: bold 24px sans-serif; color: white; text-shadow: 1px 1px 2px #000;
-    }
+    #ui { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; font: bold 24px sans-serif; color: white; text-shadow: 1px 1px 2px #000; }
+    #ui div { padding: 0 10px; }
   </style>
 </head>
 <body>
-  <div id="score">0</div>
+  <div id="ui">
+    <div id="stage">Stage: 1</div>
+    <div id="score">0</div>
+    <div id="hp">HP: 100</div>
+  </div>
   <canvas id="game"></canvas>
   <script>
     const canvas = document.getElementById('game');
     const ctx    = canvas.getContext('2d');
-    const scoreEl = document.getElementById('score');
+    const ui     = { stage: document.getElementById('stage'), score: document.getElementById('score'), hp: document.getElementById('hp') };
 
-    // 画面サイズをウィンドウに合わせる
+    let lastDamageTime = 0;
+
     function resize() {
       canvas.width  = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -28,121 +32,167 @@
     window.addEventListener('resize', resize);
     resize();
 
-    // 鳥の定義
-    const bird = {
-      x: 80,
-      y: canvas.height/2,
-      w: 30, h: 30,
-      vy: 0,
-      gravity: 0.6,
-      jump: -12,
-      draw() {
-        ctx.fillStyle = '#ff0';
-        ctx.fillRect(this.x, this.y, this.w, this.h);
-      },
-      update() {
-        this.vy += this.gravity;
-        this.y  += this.vy;
-        // 地面／天井制限
-        if (this.y + this.h > canvas.height) { this.y = canvas.height - this.h; this.vy = 0; gameOver(); }
-        if (this.y < 0) { this.y = 0; this.vy = 0; }
-      },
-      flap() {
-        this.vy = this.jump;
-      }
-    };
+    // ゲーム変数
+    const bird = { x:80, y:0, w:30, h:30, vy:0, gravity:0.6, jump:-12 };
+    let pipes = [], items = [], enemies = [];
+    let frame = 0, score = 0, hp = 100, running = true;
+    let stage = 1, startTime = Date.now();
+    let flash = 0, shake = 0;
+    let gameOverFlag = false;
 
-    // パイプの定義
-    const pipes = [];
-    const PIPE_W = 50;
-    const GAP    = 210;
-    let frame    = 0;
-    let score    = 0;
-    let running  = true;
+    // 初期配置
+    function init() {
+      bird.y = canvas.height/2; bird.vy=0;
+      pipes=[]; items=[]; enemies=[];
+      frame=0; score=0; hp=100; stage=1;
+      startTime=Date.now(); flash=0; shake=0; gameOverFlag=false;
+      lastDamageTime = 0;
+      updateUI();
+    }
 
+    function updateUI() {
+      ui.score.textContent = score;
+      ui.hp.textContent = `HP: ${hp}`;
+      ui.stage.textContent = `Stage: ${stage}`;
+    }
+
+    // スポーン関数
     function spawnPipe() {
-      const topH = Math.random() * (canvas.height - GAP - 80) + 40;
-      pipes.push({
-        x: canvas.width,
-        topH: topH,
-        bottomY: topH + GAP
-      });
+      const gap=140;
+      const topH = Math.random()*(canvas.height-gap-80)+40;
+      pipes.push({ x:canvas.width, topH, bottomY:topH+gap });
+    }
+    function spawnItem() {
+      items.push({ x:canvas.width, y:Math.random()*(canvas.height-50)+25, collected:false });
+    }
+    function spawnEnemy() {
+      enemies.push({ x:canvas.width, y:Math.random()*(canvas.height-30), w:30, h:30 });
     }
 
-    function drawPipes() {
-      ctx.fillStyle = '#0a0';
-      pipes.forEach(p => {
-        // 上パイプ
-        ctx.fillRect(p.x, 0, PIPE_W, p.topH);
-        // 下パイプ
-        ctx.fillRect(p.x, p.bottomY, PIPE_W, canvas.height - p.bottomY);
-      });
+    // 衝突ハンドラ
+    function handleCollision(damage=10) {
+      const now = Date.now();
+      if (!running || now - lastDamageTime < 500) return; // 0.5秒無敵
+      lastDamageTime = now;
+      hp = Math.max(0, hp - damage);
+      flash = 20;
+      shake = 20;
+      updateUI();
+      navigator.vibrate?.(50);
+      if (hp <= 0) doGameOver();
     }
 
-    function updatePipes() {
-      for (let i = pipes.length - 1; i >= 0; i--) {
-        const p = pipes[i];
-        p.x -= 2;
-        // スコア計算
-        if (!p.counted && p.x + PIPE_W < bird.x) {
-          score++; p.counted = true;
-          scoreEl.textContent = score;
-        }
-        // 画面外になったパイプは削除
-        if (p.x + PIPE_W < 0) pipes.splice(i,1);
-        // 衝突判定
-        if (bird.x < p.x + PIPE_W &&
-            bird.x + bird.w > p.x &&
-            (bird.y < p.topH || bird.y + bird.h > p.bottomY)) {
-          gameOver();
-        }
-      }
-    }
-
-    function gameOver() {
-      if (!running) return;
+    function doGameOver() {
+      gameOverFlag = true;
       running = false;
-      // 振動フィードバック（モバイル）
-      navigator.vibrate?.(200);
-      setTimeout(resetGame, 1500);
+      // Game Over表示
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 48px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Game Over', canvas.width/2, canvas.height/2);
+      ctx.restore();
+      // 5秒後リセット
+      setTimeout(resetGame, 5000);
+    }
+
+    function nextStage() {
+      stage++;
+      startTime = Date.now();
+      updateUI();
     }
 
     function resetGame() {
-      pipes.length = 0;
-      bird.y = canvas.height/2; bird.vy = 0;
-      frame = 0; score = 0; scoreEl.textContent = score;
-      running = true;
-      loop();
+      init(); loop();
     }
 
     // メインループ
     function loop() {
-      if (!running) return;
       ctx.clearRect(0,0,canvas.width,canvas.height);
+      if (!running) return;
+      const now = Date.now();
+      const elapsed = now - startTime;
 
-      // ステージ更新
+      // ステージ切り替え
+      if (elapsed > 20000) nextStage();
+
+      ctx.save();
+      // シェイク
+      if (shake > 0) {
+        const dx = (Math.random() - 0.5) * 10;
+        ctx.translate(dx, 0);
+        shake--;
+      }
+
+      // フラッシュ
+      if (flash > 0) {
+        ctx.fillStyle = 'rgba(255,255,0,' + (flash/20*0.5) + ')';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        flash--;
+      }
+
+      // 更新
       frame++;
-      if (frame % 120 === 0) spawnPipe();
+      const pipeInterval = Math.max(60, 120 - stage*10);
+      if (frame === pipeInterval/2 || frame % pipeInterval === 0) spawnPipe();
+      if (frame % pipeInterval === 0 && frame !== 0) spawnItem();
+      const enemyInterval = Math.max(200, 300 - stage*20);
+      if (frame % enemyInterval === 0) {
+        for (let i = 0; i < 3; i++) spawnEnemy(); // 敵3倍
+      }
 
-      bird.update();
-      updatePipes();
+      // 鳥
+      bird.vy += bird.gravity;
+      bird.y += bird.vy;
+      if (bird.y + bird.h > canvas.height) { bird.y = canvas.height - bird.h; bird.vy = 0; handleCollision(); }
+      if (bird.y < 0) { bird.y = 0; bird.vy = 0; }
+
+      // パイプ更新
+      pipes = pipes.filter(p => {
+        p.x -= 2 + stage*0.2;
+        if (bird.x < p.x + 50 && bird.x + bird.w > p.x && (bird.y < p.topH || bird.y + bird.h > p.bottomY)) handleCollision();
+        if (p.x + 50 < bird.x && !p.scored) { score++; p.scored = true; updateUI(); }
+        return p.x + 50 > 0;
+      });
+
+      // アイテム更新
+      items = items.filter(it => {
+        it.x -= 2;
+        if (!it.collected && bird.x < it.x + 15 && bird.x + bird.w > it.x - 15 && bird.y < it.y + 15 && bird.y + bird.h > it.y - 15) {
+          it.collected = true;
+          hp = 100;
+          updateUI();
+        }
+        return it.x + 15 > 0 && !it.collected;
+      });
+
+      // 敵更新
+      enemies = enemies.filter(en => {
+        en.x -= 3 + stage*0.3;
+        if (bird.x < en.x + en.w && bird.x + bird.w > en.x && bird.y < en.y + en.h && bird.y + bird.h > en.y) {
+          handleCollision(20);
+        }
+        return en.x + en.w > 0;
+      });
 
       // 描画
-      drawPipes();
-      bird.draw();
+      ctx.fillStyle = '#0a0'; pipes.forEach(p => { ctx.fillRect(p.x, 0, 50, p.topH); ctx.fillRect(p.x, p.bottomY, 50, canvas.height - p.bottomY); });
+      ctx.fillStyle = '#009'; items.forEach(it => { ctx.beginPath(); ctx.arc(it.x, it.y, 15, 0, 2*Math.PI); ctx.fill(); });
+      ctx.fillStyle = '#f00'; enemies.forEach(en => { ctx.fillRect(en.x, en.y, en.w, en.h); });
+      ctx.fillStyle = '#ff0'; ctx.fillRect(bird.x, bird.y, bird.w, bird.h);
 
+      ctx.restore();
       requestAnimationFrame(loop);
     }
 
-    // 入力（タップ／クリック／スペースキー）
-    window.addEventListener('keydown', e => {
-      if (e.code === 'Space') bird.flap();
-    });
-    canvas.addEventListener('click', () => bird.flap());
-    canvas.addEventListener('touchstart', () => bird.flap());
+    // 入力
+    window.addEventListener('pointerdown', () => { if (running) bird.vy = bird.jump; });
+    window.addEventListener('keydown', e => { if (e.code === 'Space' && running) bird.vy = bird.jump; });
 
-    // ゲーム開始
-    loop();
+    // 初期化＆開始
+    init(); loop();
   </script>
 </body>
 </html>
