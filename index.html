@@ -23,12 +23,12 @@ function resize(){canvas.width=innerWidth;canvas.height=innerHeight;}window.addE
 
 const assets = {};
 const sounds = {};
+let audioUnlocked = false; // ★ 修正: オーディオが有効化されたかを管理するフラグ
 
 //------------------ game state ------------------
 let pipes=[],items=[],enemies=[];
 let frame=0,score=0,hp=100,stage=1,startTime=Date.now();
 let flash=0,shake=0,running=true,storyActive=false,storyStart=0;
-let soundsInitialized = false; // ★ 修正: サウンド初期化フラグを追加
 const player={x:80,y:0,vy:0,gravity:0.6,jump:-6,double:-12,r:20};
 const storyTexts=['Stage1: 大雨とピアノ！','Stage2: ネギと寿司の猛追！','Stage3: 虫のダイナミックな襲来！','Stage4: 三重苦！アイスが救い！','Stage5: 寿司リサイタル！','Stage6: ネギ竜巻と虫の大合唱！','Stage7: 鍵盤の雨音！','Stage8: 虫と寿司の包囲網！','Stage9: 究極の三つ巴バトル！','Final: 赤ちゃんVS三大天災！'];
 const ui={stage:document.getElementById('stage'),score:document.getElementById('score'),hp:document.getElementById('hp')};
@@ -64,7 +64,8 @@ function preloadAssets() {
     assets.enemy2 = createImage((c,p)=>{const {x,y,w,h}=p;c.fillStyle='#363636';c.beginPath();c.ellipse(x,y,w/2-2,h/4,0,0,7);c.fill();c.strokeStyle='#000';c.lineWidth=2;for(let i=0;i<6;i++){const a=Math.PI/3*i;c.beginPath();c.moveTo(x,y);c.lineTo(x+Math.cos(a)*w/2,y+Math.sin(a)*h/2);c.stroke();}}, 40, 30);
 }
 
-function playSound(sound){if(sound && soundsInitialized){sound.currentTime=0;sound.play().catch(e=>{});}}
+// ★ 修正: オーディオがアンロックされている場合のみ再生
+function playSound(sound){if(sound && audioUnlocked){sound.currentTime=0;sound.play().catch(e=>{});}}
 function draw(asset,x,y,w,h){if(asset)ctx.drawImage(asset,x-w/2,y-h/2,w,h);}
 
 function spawnPipe() {
@@ -88,7 +89,12 @@ function spawnEnemy() {
     enemies.push(props);
 }
 
-function showStory(txt){storyActive=true;storyStart=Date.now();storyEl.textContent=txt;storyEl.style.display='block';speechSynthesis.speak(new SpeechSynthesisUtterance(txt));}
+function showStory(txt){
+    storyActive=true;storyStart=Date.now();storyEl.textContent=txt;storyEl.style.display='block';
+    const utterance = new SpeechSynthesisUtterance(txt);
+    utterance.rate = 1.5; 
+    speechSynthesis.speak(utterance);
+}
 function startStory(){playSound(sounds.stage);running=false;showStory(storyTexts[(stage-1)%storyTexts.length]);}
 function endStory(){storyActive=false;storyEl.style.display='none';stage++;startTime=Date.now();updateUI();running=true;}
 function doGameOver(){playSound(sounds.gameOver);running=false;showStory('Game Over! Restarting...');setTimeout(init,5000);}
@@ -96,24 +102,24 @@ function doGameOver(){playSound(sounds.gameOver);running=false;showStory('Game O
 let tapCount=0,lastTap=0;
 function performJump(){playSound(sounds.jump);const now=Date.now();tapCount=now-lastTap<400?tapCount+1:1;lastTap=now;player.vy=tapCount>=3?player.double:player.jump;}
 
-// ★ 修正: 最初のユーザー操作でサウンドを有効化する
-function initializeSounds() {
-    if (soundsInitialized) return;
-    Object.values(sounds).forEach(sound => {
-        sound.volume = 0; // 一時的にミュート
-        sound.play().catch(e => {}); // 再生を試みる
-        sound.pause(); // すぐに一時停止
-        sound.currentTime = 0;
-        sound.volume = 1; // 音量を戻す
-    });
-    soundsInitialized = true;
+// ★ 修正: ユーザーの最初の操作で全ての音声を有効化する関数
+function unlockAudio() {
+  if (audioUnlocked) return;
+  Object.values(sounds).forEach(sound => {
+    sound.volume = 0;
+    sound.play().catch(e => {});
+    sound.pause();
+    sound.currentTime = 0;
+    sound.volume = 1;
+  });
+  audioUnlocked = true;
 }
-window.addEventListener('pointerdown',()=>{initializeSounds(); if(running&&!storyActive)performJump();});
-window.addEventListener('keydown',e=>{initializeSounds(); if(e.code==='Space'&&running&&!storyActive)performJump();});
+window.addEventListener('pointerdown',()=>{unlockAudio(); if(running&&!storyActive)performJump();});
+window.addEventListener('keydown',e=>{unlockAudio(); if(e.code==='Space'&&running&&!storyActive)performJump();});
 
 function init(){
     player.y=canvas.height/2;player.vy=0;pipes=[];items=[];enemies=[];frame=0;score=0;hp=100;stage=1;startTime=Date.now();flash=0;shake=0;storyActive=false;running=true;
-    soundsInitialized = false; // ★ 修正: ゲームリセット時にフラグを戻す
+    audioUnlocked = false; // ★ 修正: ゲームリセット時にオーディオフラグもリセット
     updateUI();
 }
 let lastDamage=0;
@@ -122,7 +128,7 @@ function handleCollision(dmg=10){const now=Date.now();if(now-lastDamage<500||!ru
 function loop(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   const now=Date.now();
-  if(storyActive){if(now-storyStart>4000)endStory();requestAnimationFrame(loop);return;}
+  if(storyActive){if(now-storyStart > (4000 / 1.5))endStory();requestAnimationFrame(loop);return;}
   if(running&&now-startTime>20000){startStory();requestAnimationFrame(loop);return;}
   ctx.save();
   if(shake>0){shake--;ctx.translate((Math.random()-0.5)*10,0);}
@@ -151,7 +157,7 @@ function loop(){
       draw(assets[`item${it.type}`], it.x, it.y, it.w, it.h);
       if(Math.hypot(player.x-it.x,player.y-it.y)<player.r+it.w/2){
           playSound(sounds.item);
-          hp = 100; // ★ 修正: HPを100に回復
+          hp = 100;
           updateUI();
           return false;
       }
@@ -165,7 +171,7 @@ function loop(){
       }
       en.x -= speed * 1.2;
       draw(assets[`enemy${en.type}`], en.x, en.y, en.w, en.h);
-      if(Math.hypot(player.x-en.x,player.y-en.y)<player.r+en.w/2)handleCollision(25);
+      if(Math.hypot(player.x-en.x,player.y-en.y)<player.r+en.w/2)handleCollision(10); // ★ 修正: ダメージ量を10に変更
       return en.x > -en.w;
   });
 
@@ -173,6 +179,7 @@ function loop(){
   if(running) requestAnimationFrame(loop);
 }
 
+// ★ 修正: ゲーム開始処理を簡素化し、描画問題を修正
 preloadAssets();
 init();
 loop();
