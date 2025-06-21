@@ -24,8 +24,8 @@
     const ui     = { stage: document.getElementById('stage'), score: document.getElementById('score'), hp: document.getElementById('hp') };
 
     let lastDamageTime = 0;
-    let lastTilt = 0;
-    const tiltThreshold = -15; // 上に傾けた角度の閾値 (β がこの値未満になったときにジャンプ)
+    let lastTiltTime = 0;
+    const tiltThreshold = -15; // β角度閾値
 
     function resize() {
       canvas.width  = window.innerWidth;
@@ -40,17 +40,15 @@
     let frame = 0, score = 0, hp = 100, running = true;
     let stage = 1, startTime = Date.now();
     let flash = 0, shake = 0;
-    let gameOverFlag = false;
 
-    // 初期配置
     function init() {
-      bird.y = canvas.height/2; bird.vy=0;
-      pipes=[]; items=[]; enemies=[];
-      frame=0; score=0; hp=100; stage=1;
-      startTime=Date.now(); flash=0; shake=0; gameOverFlag=false;
-      lastDamageTime = 0;
-      lastTilt = 0;
+      bird.y = canvas.height/2; bird.vy = 0;
+      pipes = []; items = []; enemies = [];
+      frame = 0; score = 0; hp = 100; stage = 1;
+      startTime = Date.now(); flash = 0; shake = 0;
+      lastDamageTime = 0; lastTiltTime = 0;
       updateUI();
+      running = true;
     }
 
     function updateUI() {
@@ -59,27 +57,24 @@
       ui.stage.textContent = `Stage: ${stage}`;
     }
 
-    // スポーン関数
     function spawnPipe() {
-      const gap=140;
-      const topH = Math.random()*(canvas.height-gap-80)+40;
-      pipes.push({ x:canvas.width, topH, bottomY:topH+gap });
+      const gap = 140;
+      const topH = Math.random() * (canvas.height - gap - 80) + 40;
+      pipes.push({ x: canvas.width, topH, bottomY: topH + gap, scored: false });
     }
     function spawnItem() {
-      items.push({ x:canvas.width, y:Math.random()*(canvas.height-50)+25, collected:false });
+      items.push({ x: canvas.width, y: Math.random() * (canvas.height - 50) + 25, collected: false });
     }
     function spawnEnemy() {
-      enemies.push({ x:canvas.width, y:Math.random()*(canvas.height-30), w:30, h:30 });
+      enemies.push({ x: canvas.width, y: Math.random() * (canvas.height - 30), w:30, h:30 });
     }
 
-    // 衝突ハンドラ
-    function handleCollision(damage=10) {
+    function handleCollision(damage = 10) {
       const now = Date.now();
-      if (!running || now - lastDamageTime < 500) return; // 0.5秒無敵時間
+      if (!running || now - lastDamageTime < 500) return;
       lastDamageTime = now;
       hp = Math.max(0, hp - damage);
-      flash = 20;
-      shake = 20;
+      flash = 20; shake = 20;
       updateUI();
       navigator.vibrate?.(50);
       if (hp <= 0) doGameOver();
@@ -87,17 +82,16 @@
 
     function doGameOver() {
       running = false;
-      // Game Over表示
+      // Game Over 表示
       ctx.save();
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 48px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('Game Over', canvas.width/2, canvas.height/2);
       ctx.restore();
-      // 5秒後リセット＆再開
-      setTimeout(() => { init(); loop(); }, 5000);
+      setTimeout(init, 5000);
     }
 
     function nextStage() {
@@ -106,75 +100,81 @@
       updateUI();
     }
 
-    // メインループ
+    // 入力処理
+    window.addEventListener('pointerdown', () => { if (running) bird.vy = bird.jump; });
+    window.addEventListener('keydown', e => { if (running && e.code === 'Space') bird.vy = bird.jump; });
+    window.addEventListener('deviceorientation', e => {
+      const now = Date.now();
+      if (!running) return;
+      const beta = e.beta || 0;
+      if (beta < tiltThreshold && now - lastTiltTime > 500) {
+        bird.vy = bird.jump;
+        lastTiltTime = now;
+      }
+    });
+
     function loop() {
       ctx.clearRect(0,0,canvas.width,canvas.height);
       if (!running) return;
+
       const now = Date.now();
       const elapsed = now - startTime;
-
-      // ステージ切り替え
       if (elapsed > 20000) nextStage();
 
+      // シェイク & フラッシュ
       ctx.save();
-      // シェイク
-      if (shake > 0) {
-        const dx = (Math.random() - 0.5) * 10;
-        ctx.translate(dx, 0);
-        shake--;
-      }
-
-      // フラッシュ
-      if (flash > 0) {
-        ctx.fillStyle = 'rgba(255,255,0,' + (flash/20*0.5) + ')';
+      if (shake-- > 0) ctx.translate((Math.random()-0.5)*10, 0);
+      if (flash-- > 0) {
+        ctx.fillStyle = `rgba(255,255,0,${(flash/20)*0.5})`;
         ctx.fillRect(0,0,canvas.width,canvas.height);
-        flash--;
       }
 
       // 更新
       frame++;
       const pipeInterval = Math.max(60, 120 - stage*10);
       if (frame === pipeInterval/2 || frame % pipeInterval === 0) spawnPipe();
-      if (frame % pipeInterval === 0 && frame !== 0) spawnItem();
+      if (frame % pipeInterval === 0) spawnItem();
       const enemyInterval = Math.max(200, 300 - stage*20);
-      if (frame % enemyInterval === 0) {
-        for (let i = 0; i < 3; i++) spawnEnemy(); // 敵3倍
-      }
+      if (frame % enemyInterval === 0) for(let i=0;i<3;i++) spawnEnemy();
 
-      // 鳥
       bird.vy += bird.gravity;
       bird.y += bird.vy;
       if (bird.y + bird.h > canvas.height) { bird.y = canvas.height - bird.h; bird.vy = 0; handleCollision(); }
       if (bird.y < 0) { bird.y = 0; bird.vy = 0; }
 
-      // パイプ更新
       pipes = pipes.filter(p => {
         p.x -= 2 + stage*0.2;
+        if (!p.scored && p.x + 50 < bird.x) { score++; p.scored = true; updateUI(); }
         if (bird.x < p.x + 50 && bird.x + bird.w > p.x && (bird.y < p.topH || bird.y + bird.h > p.bottomY)) handleCollision();
-        if (p.x + 50 < bird.x && !p.scored) { score++; p.scored = true; updateUI(); }
         return p.x + 50 > 0;
       });
 
-      // アイテム更新
       items = items.filter(it => {
         it.x -= 2;
         if (!it.collected && bird.x < it.x + 15 && bird.x + bird.w > it.x - 15 && bird.y < it.y + 15 && bird.y + bird.h > it.y - 15) {
-          it.collected = true;
-          hp = 100;
-          updateUI();
+          it.collected = true; hp=100; updateUI();
         }
         return it.x + 15 > 0 && !it.collected;
       });
 
-      // 敵更新
       enemies = enemies.filter(en => {
         en.x -= 3 + stage*0.3;
-        if (bird.x < en.x + en.w && bird.x + bird.w > en.x && bird.y < en.y + en.h && bird.y + bird.h > en.y) {
-          handleCollision(20);
-        }
+        if (bird.x < en.x + en.w && bird.x + bird.w > en.x && bird.y < en.y + en.h && bird.y + bird.h > en.y) handleCollision(20);
         return en.x + en.w > 0;
       });
 
       // 描画
-      ctx.fillStyle = '#0a0'; pipes.forEach(p => { ctx.fillRect(p.x, 0, 50, p.topH); ctx.fillRect(p.x, p.bottomY, 50, canvas.height - p.bottomY); });
-      ctx.fillStyle = '#009'; items.forEach(it => { ctx.beginPath(); ctx.arc(it.x, it.y, 15, 0, 2*Math
+      pipes.forEach(p => { ctx.fillStyle='#0a0'; ctx.fillRect(p.x,0,50,p.topH); ctx.fillRect(p.x,p.bottomY,50,canvas.height-p.bottomY); });
+      items.forEach(it => { ctx.fillStyle='#009'; ctx.beginPath(); ctx.arc(it.x,it.y,15,0,2*Math.PI); ctx.fill(); });
+      enemies.forEach(en => { ctx.fillStyle='#f00'; ctx.fillRect(en.x,en.y,en.w,en.h); });
+      ctx.fillStyle='#ff0'; ctx.fillRect(bird.x,bird.y,bird.w,bird.h);
+
+      ctx.restore();
+      requestAnimationFrame(loop);
+    }
+
+    init();
+    loop();
+  </script>
+</body>
+</html>
