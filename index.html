@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Tilt Maze</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <style>
+    body, html { margin: 0; padding: 0; overflow: hidden; }
+    #reset { position: absolute; top: 10px; left: 10px; z-index: 10; }
+  </style>
+</head>
+<body>
+  <button id="reset">Reset</button>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    // module aliases
+    const Engine    = Matter.Engine,
+          Render    = Matter.Render,
+          World     = Matter.World,
+          Bodies    = Matter.Bodies,
+          Body      = Matter.Body;
+
+    // create engine & world
+    const engine = Engine.create();
+    const world  = engine.world;
+
+    // create renderer
+    const render = Render.create({
+      canvas: document.getElementById('canvas'),
+      engine: engine,
+      options: {
+        wireframes: false,
+        background: '#fafafa',
+        width: window.innerWidth,
+        height: window.innerHeight
+      }
+    });
+
+    // ボール
+    const ball = Bodies.circle(window.innerWidth/2, 100, 20, {
+      restitution: 0.5,
+      friction: 0.01
+    });
+
+    // 迷路の簡易壁（例：四辺だけ）
+    const thickness = 50;
+    const walls = [
+      Bodies.rectangle(window.innerWidth/2, -thickness/2, window.innerWidth, thickness, { isStatic: true }),    // top
+      Bodies.rectangle(window.innerWidth/2, window.innerHeight+thickness/2, window.innerWidth, thickness, { isStatic: true }), // bottom
+      Bodies.rectangle(-thickness/2, window.innerHeight/2, thickness, window.innerHeight, { isStatic: true }),  // left
+      Bodies.rectangle(window.innerWidth+thickness/2, window.innerHeight/2, thickness, window.innerHeight, { isStatic: true }), // right
+      // ここに迷路の内部壁を追加していく…
+    ];
+
+    World.add(world, [ball, ...walls]);
+
+    // デバイス傾きで重力ベクトルを制御
+    window.addEventListener('deviceorientation', event => {
+      // γ: 左右傾き (–90 ~ 90), β: 前後傾き (–180 ~ 180)
+      const gamma = event.gamma || 0;
+      const beta  = event.beta  || 0;
+      // 重力を強めに設定
+      world.gravity.x = Matter.Common.clamp(gamma / 90, -1, 1);
+      world.gravity.y = Matter.Common.clamp(beta  / 90, -1, 1);
+    });
+
+    // リセット処理
+    document.getElementById('reset').addEventListener('click', () => {
+      Body.setPosition(ball, { x: window.innerWidth/2, y: 100 });
+      Body.setVelocity(ball, { x: 0, y: 0 });
+      Body.setAngularVelocity(ball, 0);
+    });
+
+    // エンジン＆レンダー開始
+    Engine.run(engine);
+    Render.run(render);
+
+    // リサイズ対応
+    window.addEventListener('resize', () => {
+      render.canvas.width  = window.innerWidth;
+      render.canvas.height = window.innerHeight;
+    });
+  </script>
+</body>
+</html>
